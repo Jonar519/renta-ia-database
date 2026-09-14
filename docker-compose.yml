@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: renta_ia
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - renta_ia_pgdata:/var/lib/postgresql/data
     healthcheck:
