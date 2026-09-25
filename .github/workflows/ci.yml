@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migrations:
+    name: Migraciones y seed sobre una base limpia
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: renta_ia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/renta_ia
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # El runner ubuntu-latest ya trae el cliente psql.
+      - name: Aplicar migraciones sobre una base vacía
+        run: bash scripts/migrate.sh
+
+      - name: Segunda ejecución (debe saltar todas las migraciones)
+        run: |
+          bash scripts/migrate.sh | tee second-run.log
+          grep -q "Listo: 0 migración" second-run.log
+
+      - name: Cargar el seed dos veces (debe ser idempotente)
+        run: |
+          bash scripts/seed.sh
+          bash scripts/seed.sh
+          test "$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM users')" = "3"
+          test "$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM tax_concepts')" = "2"
+          test "$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM alerts')" = "1"
+
+      - name: Todas las migraciones quedaron registradas
+        run: |
+          expected=$(find migrations -maxdepth 1 -name '*.sql' | wc -l)
+          actual=$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM schema_migrations')
+          echo "migraciones: $expected · registradas: $actual"
+          test "$expected" = "$actual"
+
+      - name: Baseline sobre una base creada antes de schema_migrations
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE legacy"
+          LEGACY_URL=postgresql://postgres:postgres@localhost:5432/legacy
+          for f in migrations/00[1-9]_*.sql; do psql "$LEGACY_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
+          DATABASE_URL="$LEGACY_URL" bash scripts/migrate.sh | tee legacy.log
+          grep -q "baseline" legacy.log
