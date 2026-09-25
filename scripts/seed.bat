@@ -1,20 +1,29 @@
 @echo off
 REM scripts\seed.bat
 REM Carga los datos de prueba dentro del contenedor de Postgres.
+REM Los archivos de seed\ son idempotentes: se pueden ejecutar varias veces
+REM sin duplicar datos. Cada archivo corre en una transaccion.
+REM
+REM Contrasena de todos los usuarios de prueba: Password123!
+REM
 REM Uso (desde la carpeta renta-ia-database, en cmd.exe):
 REM     scripts\seed.bat
+REM Opcional: set DB_NAME=otra_base   (por defecto renta_ia)
 
 setlocal enabledelayedexpansion
 
-set CONTAINER=renta_ia_postgres
-set DB_NAME=renta_ia
-set DB_USER=postgres
+if "%CONTAINER%"=="" set CONTAINER=renta_ia_postgres
+if "%DB_NAME%"=="" set DB_NAME=renta_ia
+if "%DB_USER%"=="" set DB_USER=postgres
+REM Oculta los NOTICE de Postgres. Se pasa al contenedor con "-e PGOPTIONS"
+REM (sin "="): dentro de "for /f", cmd.exe trata "=" como separador.
+set "PGOPTIONS=-c client_min_messages=warning"
 
 echo Cargando datos de prueba...
 
 for %%f in (seed\*.sql) do (
     echo -^> cargando %%f
-    docker exec -i %CONTAINER% psql -U %DB_USER% -d %DB_NAME% < "%%f"
+    docker exec -i -e PGOPTIONS %CONTAINER% psql -U %DB_USER% -d %DB_NAME% -v ON_ERROR_STOP=1 -X -q --single-transaction -f - < "%%f"
     if errorlevel 1 (
         echo ERROR al cargar %%f
         exit /b 1
