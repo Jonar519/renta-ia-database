@@ -45,6 +45,14 @@ El `docker-compose.yml` publica Postgres en el puerto **5433** del host (`5433:5
 
 ### Windows (cmd.exe): no necesita `psql` instalado
 
+Para otra base (por ejemplo la de E2E), créala una vez y define `DB_NAME` antes de migrar:
+
+```bat
+docker exec renta_ia_postgres psql -U postgres -c "CREATE DATABASE renta_ia_e2e"
+set DB_NAME=renta_ia_e2e
+scripts\migrate.bat
+```
+
 Los `.bat` ejecutan `psql` dentro del contenedor (`docker exec`):
 
 ```bat
@@ -143,7 +151,9 @@ Es idempotente: se puede volver a ejecutar sin duplicar datos. Al hacerlo sobre 
 | Usuario          | Correo              | Rol        | Contraseña     |
 | ---------------- | ------------------- | ---------- | -------------- |
 | Ana Contadora    | `ana@example.com`   | accountant | `Password123!` |
-| Luis Asistente   | `luis@example.com`  | assistant  | `Password123!` |
+| Luis Asistente   | `luis@example.com`  | assistant (trabaja para Ana: ve y edita sus clientes, no los crea ni borra) | `Password123!` |
 | Admin Plataforma | `admin@example.com` | admin      | `Password123!` |
+
+Las contraseñas del seed son anteriores a la política de contraseñas (10+ caracteres, sin comunes): sirven para iniciar sesión, pero el registro ya no aceptaría una así.
 
 Los documentos del seed son solo metadatos: sus archivos no existen en `uploads/` del backend, así que no se pueden reprocesar.
