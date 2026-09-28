@@ -17,9 +17,15 @@ renta-ia-database/
 │   ├── 008_alerts.sql
 │   ├── 009_ai_conversations_and_messages.sql
 │   ├── 010_hardening.sql # Índices, UNIQUE/CHECK, email sin mayúsculas, updated_at automático
-│   └── 011_alert_dedupe.sql # dedupe_key + índice único parcial: una alerta activa por situación
+│   ├── 011_alert_dedupe.sql # dedupe_key + índice único parcial: una alerta activa por situación
+│   ├── 012_document_sha256.sql # SHA-256 del archivo: evita subir dos veces el mismo documento a un cliente
+│   ├── 013_web_vitals.sql # Métricas Web Vitals (RUM) enviadas por el frontend
+│   ├── 014_sessions_and_login_attempts.sql # Refresh tokens rotativos (solo su hash) y bloqueo progresivo de login
+│   ├── 015_audit_log.sql # Registro de auditoría (sin datos sensibles)
+│   └── 016_roles.sql # Asistentes asignados a contadores y usuario de portal de cada cliente
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
-│   └── 001_seed.sql
+│   ├── 001_seed.sql
+│   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
 ├── scripts/
 │   ├── migrate.sh / migrate.bat  # Aplica las migraciones pendientes (bash · cmd.exe)
 │   └── seed.sh / seed.bat        # Carga los datos de prueba
@@ -121,6 +127,11 @@ Ver [`docs/erd.png`](docs/erd.png). Resumen de entidades:
 | `document_embeddings` | Vectores semánticos de cada documento, usados para RAG |
 | `alerts` | Vencimientos e inconsistencias detectadas |
 | `ai_conversations` / `ai_messages` | Historial del chat conversacional con el asistente de IA |
+| `web_vitals` | Métricas de experiencia real de usuario (LCP, INP, CLS…) |
+| `refresh_tokens` | Sesiones: hash de cada refresh token, su familia de rotación y su revocación |
+| `login_attempts` | Fallos de login por cuenta (clave = SHA-256 del correo) para el bloqueo progresivo |
+| `audit_log` | Quién hizo qué, sobre qué entidad y cuándo (login, accesos, subidas, CRUD) |
+| `accountant_assistants` | Qué asistentes trabajan para qué contador (rol `assistant`) |
 | `schema_migrations` | Historial de migraciones aplicadas (lo gestionan los scripts) |
 
 ## Datos de prueba (seed)
