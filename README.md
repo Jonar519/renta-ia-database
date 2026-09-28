@@ -16,7 +16,8 @@ renta-ia-database/
 │   ├── 007_document_embeddings.sql
 │   ├── 008_alerts.sql
 │   ├── 009_ai_conversations_and_messages.sql
-│   └── 010_hardening.sql # Índices, UNIQUE/CHECK, email sin mayúsculas, updated_at automático
+│   ├── 010_hardening.sql # Índices, UNIQUE/CHECK, email sin mayúsculas, updated_at automático
+│   └── 011_alert_dedupe.sql # dedupe_key + índice único parcial: una alerta activa por situación
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   └── 001_seed.sql
 ├── scripts/
