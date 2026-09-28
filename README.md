@@ -16,9 +16,16 @@ renta-ia-database/
 │   ├── 007_document_embeddings.sql
 │   ├── 008_alerts.sql
 │   ├── 009_ai_conversations_and_messages.sql
-│   └── 010_hardening.sql # Índices, UNIQUE/CHECK, email sin mayúsculas, updated_at automático
+│   ├── 010_hardening.sql # Índices, UNIQUE/CHECK, email sin mayúsculas, updated_at automático
+│   ├── 011_alert_dedupe.sql # dedupe_key + índice único parcial: una alerta activa por situación
+│   ├── 012_document_sha256.sql # SHA-256 del archivo: evita subir dos veces el mismo documento a un cliente
+│   ├── 013_web_vitals.sql # Métricas Web Vitals (RUM) enviadas por el frontend
+│   ├── 014_sessions_and_login_attempts.sql # Refresh tokens rotativos (solo su hash) y bloqueo progresivo de login
+│   ├── 015_audit_log.sql # Registro de auditoría (sin datos sensibles)
+│   └── 016_roles.sql # Asistentes asignados a contadores y usuario de portal de cada cliente
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
-│   └── 001_seed.sql
+│   ├── 001_seed.sql
+│   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
 ├── scripts/
 │   ├── migrate.sh / migrate.bat  # Aplica las migraciones pendientes (bash · cmd.exe)
 │   └── seed.sh / seed.bat        # Carga los datos de prueba
@@ -37,6 +44,14 @@ renta-ia-database/
 El `docker-compose.yml` publica Postgres en el puerto **5433** del host (`5433:5432`), para no chocar con un Postgres instalado localmente en el 5432. Usuario/contraseña: `postgres`/`postgres`, base `renta_ia`.
 
 ### Windows (cmd.exe): no necesita `psql` instalado
+
+Para otra base (por ejemplo la de E2E), créala una vez y define `DB_NAME` antes de migrar:
+
+```bat
+docker exec renta_ia_postgres psql -U postgres -c "CREATE DATABASE renta_ia_e2e"
+set DB_NAME=renta_ia_e2e
+scripts\migrate.bat
+```
 
 Los `.bat` ejecutan `psql` dentro del contenedor (`docker exec`):
 
@@ -120,6 +135,11 @@ Ver [`docs/erd.png`](docs/erd.png). Resumen de entidades:
 | `document_embeddings` | Vectores semánticos de cada documento, usados para RAG |
 | `alerts` | Vencimientos e inconsistencias detectadas |
 | `ai_conversations` / `ai_messages` | Historial del chat conversacional con el asistente de IA |
+| `web_vitals` | Métricas de experiencia real de usuario (LCP, INP, CLS…) |
+| `refresh_tokens` | Sesiones: hash de cada refresh token, su familia de rotación y su revocación |
+| `login_attempts` | Fallos de login por cuenta (clave = SHA-256 del correo) para el bloqueo progresivo |
+| `audit_log` | Quién hizo qué, sobre qué entidad y cuándo (login, accesos, subidas, CRUD) |
+| `accountant_assistants` | Qué asistentes trabajan para qué contador (rol `assistant`) |
 | `schema_migrations` | Historial de migraciones aplicadas (lo gestionan los scripts) |
 
 ## Datos de prueba (seed)
@@ -131,7 +151,9 @@ Es idempotente: se puede volver a ejecutar sin duplicar datos. Al hacerlo sobre 
 | Usuario          | Correo              | Rol        | Contraseña     |
 | ---------------- | ------------------- | ---------- | -------------- |
 | Ana Contadora    | `ana@example.com`   | accountant | `Password123!` |
-| Luis Asistente   | `luis@example.com`  | assistant  | `Password123!` |
+| Luis Asistente   | `luis@example.com`  | assistant (trabaja para Ana: ve y edita sus clientes, no los crea ni borra) | `Password123!` |
 | Admin Plataforma | `admin@example.com` | admin      | `Password123!` |
+
+Las contraseñas del seed son anteriores a la política de contraseñas (10+ caracteres, sin comunes): sirven para iniciar sesión, pero el registro ya no aceptaría una así.
 
 Los documentos del seed son solo metadatos: sus archivos no existen en `uploads/` del backend, así que no se pueden reprocesar.

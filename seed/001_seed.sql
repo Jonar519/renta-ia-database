@@ -21,6 +21,12 @@ INSERT INTO clients (id, accountant_user_id, full_name, document_number, email, 
   ('aaaaaaaa-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'María Gómez', '1020304060', 'maria.gomez@example.com', '3007654321')
 ON CONFLICT (id) DO NOTHING;
 
+-- Luis (rol assistant) trabaja para Ana: ve y gestiona los clientes de Ana,
+-- pero no puede crearlos ni borrarlos (migración 016_roles.sql).
+INSERT INTO accountant_assistants (assistant_user_id, accountant_user_id) VALUES
+  ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111')
+ON CONFLICT DO NOTHING;
+
 -- Documentos de ejemplo (solo metadatos: los archivos no existen en uploads/,
 -- por eso no se encolan para procesamiento).
 INSERT INTO documents (id, client_id, uploaded_by, doc_type, original_name, storage_key, status) VALUES
