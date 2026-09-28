@@ -67,3 +67,14 @@ jobs:
           for f in migrations/00[1-9]_*.sql; do psql "$LEGACY_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
           DATABASE_URL="$LEGACY_URL" bash scripts/migrate.sh | tee legacy.log
           grep -q "baseline" legacy.log
+
+  # Secretos en el historial (gitleaks), igual que en backend y frontend.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:v8.21.2 git /repo --redact --verbose
