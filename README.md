@@ -23,7 +23,8 @@ renta-ia-database/
 │   ├── 014_sessions_and_login_attempts.sql # Refresh tokens rotativos (solo su hash) y bloqueo progresivo de login
 │   ├── 015_audit_log.sql # Registro de auditoría (sin datos sensibles)
 │   ├── 016_roles.sql # Asistentes asignados a contadores y usuario de portal de cada cliente
-│   └── 017_account_status_and_invitations.sql # Cuentas pendientes (por invitación) garantizadas por el esquema, invitaciones y email_outbox
+│   ├── 017_account_status_and_invitations.sql # Cuentas pendientes (por invitación) garantizadas por el esquema, invitaciones y email_outbox
+│   └── 018_password_reset.sql # Tokens de recuperación de contraseña (15 min, un solo uso, solo cuentas activas)
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   ├── 001_seed.sql
 │   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
@@ -176,9 +177,13 @@ recuperación o pasos de MFA cuando existan esas tablas). No depende del backend
 | Una invitación vigente por cuenta | índice único parcial `uq_user_invitations_one_open` |
 | Solo el hash del token | `token_hash ~ ^[0-9a-f]{64}` |
 | Cuerpo del correo solo con el proveedor simulado | `chk_email_outbox_body_only_mock` |
+| Token de recuperación solo para una cuenta activa (018) | `fk_password_reset_tokens_active_user` + `CHECK (user_status = active)` |
+| Recuperación: vigencia de 15 min como máximo (018) | `chk_password_reset_tokens_expiry` |
+| Un token de recuperación vigente por cuenta (018) | índice único parcial `uq_password_reset_tokens_one_open` |
 
 Patrón para cada tabla nueva "de cuenta activa":
 `user_status account_status NOT NULL DEFAULT active CHECK (user_status = active)` y
 `FOREIGN KEY (user_id, user_status) REFERENCES users (id, status) ON DELETE CASCADE`.
 Por qué así y no con triggers: ADR 0009 en `renta-ia-backend/docs/adr/`. Las pruebas que
-intentan violar cada regla con SQL directo están en `renta-ia-backend/tests/integration/accountStatus.test.ts`.
+intentan violar cada regla con SQL directo están en `renta-ia-backend/tests/integration/accountStatus.test.ts`
+(017) y `passwordReset.test.ts` (018).
