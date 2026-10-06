@@ -22,12 +22,14 @@ renta-ia-database/
 │   ├── 013_web_vitals.sql # Métricas Web Vitals (RUM) enviadas por el frontend
 │   ├── 014_sessions_and_login_attempts.sql # Refresh tokens rotativos (solo su hash) y bloqueo progresivo de login
 │   ├── 015_audit_log.sql # Registro de auditoría (sin datos sensibles)
-│   └── 016_roles.sql # Asistentes asignados a contadores y usuario de portal de cada cliente
+│   ├── 016_roles.sql # Asistentes asignados a contadores y usuario de portal de cada cliente
+│   └── 017_account_status_and_invitations.sql # Cuentas pendientes (por invitación) garantizadas por el esquema, invitaciones y email_outbox
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   ├── 001_seed.sql
 │   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
 ├── scripts/
 │   ├── migrate.sh / migrate.bat  # Aplica las migraciones pendientes (bash · cmd.exe)
+│   ├── fingerprint.sh            # Huella de una base (migraciones, filas por tabla, hash del esquema): solo lectura
 │   └── seed.sh / seed.bat        # Carga los datos de prueba
 ├── docs/
 │   └── erd.png             # Diagrama entidad-relación
@@ -157,3 +159,26 @@ Es idempotente: se puede volver a ejecutar sin duplicar datos. Al hacerlo sobre 
 Las contraseñas del seed son anteriores a la política de contraseñas (10+ caracteres, sin comunes): sirven para iniciar sesión, pero el registro ya no aceptaría una así.
 
 Los documentos del seed son solo metadatos: sus archivos no existen en `uploads/` del backend, así que no se pueden reprocesar.
+
+## Cuentas pendientes: garantías del esquema (migración 017)
+
+Desde la Fase 5 las cuentas se crean solo por invitación. Una cuenta `invited` (pendiente) no
+tiene contraseña y **la base impide** que tenga sesiones (y, con el mismo patrón, tokens de
+recuperación o pasos de MFA cuando existan esas tablas). No depende del backend.
+
+| Regla | Restricción |
+| --- | --- |
+| Pendiente ⇔ sin contraseña | `chk_users_password_by_status` |
+| Sesión solo de una cuenta activa | `refresh_tokens.user_status` con `CHECK = active` + FK compuesta `fk_refresh_tokens_active_user` → `users (id, status)` |
+| No volver pendiente una cuenta con sesiones | La misma FK, `ON UPDATE NO ACTION` |
+| Invitación solo para una cuenta pendiente | `fk_user_invitations_invited_user` + `CHECK (user_status = invited)` |
+| Vigencia de 72 h como máximo | `chk_user_invitations_expiry` |
+| Una invitación vigente por cuenta | índice único parcial `uq_user_invitations_one_open` |
+| Solo el hash del token | `token_hash ~ ^[0-9a-f]{64}` |
+| Cuerpo del correo solo con el proveedor simulado | `chk_email_outbox_body_only_mock` |
+
+Patrón para cada tabla nueva "de cuenta activa":
+`user_status account_status NOT NULL DEFAULT active CHECK (user_status = active)` y
+`FOREIGN KEY (user_id, user_status) REFERENCES users (id, status) ON DELETE CASCADE`.
+Por qué así y no con triggers: ADR 0009 en `renta-ia-backend/docs/adr/`. Las pruebas que
+intentan violar cada regla con SQL directo están en `renta-ia-backend/tests/integration/accountStatus.test.ts`.
