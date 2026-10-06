@@ -158,6 +158,8 @@ Es idempotente: se puede volver a ejecutar sin duplicar datos. Al hacerlo sobre 
 | Luis Asistente   | `luis@example.com`  | assistant (trabaja para Ana: ve y edita sus clientes, no los crea ni borra) | `Password123!` |
 | Admin Plataforma | `admin@example.com` | admin      | `Password123!` |
 
+**Admin del seed y verificación en dos pasos (desde la Fase 5, B9):** para un administrador es obligatoria. La primera vez que `admin@example.com` inicia sesión, la app lo lleva a **Seguridad** y no lo deja usar nada más hasta activarla (contraseña → QR o clave → código de 6 dígitos → códigos de recuperación). El seed no la trae activada: el secreto se cifra con la `MFA_ENCRYPTION_KEY` de cada instalación, que la base no conoce. Para probar sin celular, `renta-ia-backend/docs/demo-fase5.md` (sección B9) trae un comando que calcula el código a partir de la clave que muestra la pantalla. Volver a ejecutar el seed **no** borra un MFA ya activado.
+
 Las contraseñas del seed son anteriores a la política de contraseñas (10+ caracteres, sin comunes): sirven para iniciar sesión, pero el registro ya no aceptaría una así.
 
 Los documentos del seed son solo metadatos: sus archivos no existen en `uploads/` del backend, así que no se pueden reprocesar.
