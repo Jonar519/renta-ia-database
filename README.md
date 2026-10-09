@@ -30,7 +30,8 @@ renta-ia-database/
 │   ├── 021_avatar.sql # Foto de perfil: solo la clave del archivo, bajo la carpeta de la propia cuenta
 │   ├── 022_user_sessions.sql # Sesiones activas: IP recortada, ubicación aproximada y equipo; toda familia de tokens tiene su sesión
 │   ├── 023_account_status_deleted.sql # Estado deleted (sola: un valor nuevo de enum no se usa en su misma transacción)
-│   └── 024_account_deletion.sql # Cuenta eliminada = lápida anónima; un cliente exige un contador activo
+│   ├── 024_account_deletion.sql # Cuenta eliminada = lápida anónima; un cliente exige un contador activo
+│   └── 025_table_density.sql # Densidad de las tablas: preferencia de trabajo de la cuenta (cómoda o compacta)
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   ├── 001_seed.sql
 │   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
