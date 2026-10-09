@@ -27,7 +27,8 @@ renta-ia-database/
 │   ├── 018_password_reset.sql # Tokens de recuperación de contraseña (15 min, un solo uso, solo cuentas activas)
 │   ├── 019_mfa.sql # Segundo factor TOTP: secreto cifrado, códigos de recuperación y pasos del login (solo cuentas activas)
 │   ├── 020_profile.sql # Teléfono del perfil y cambio de correo con confirmación (24 h, un solo uso, solo cuentas activas)
-│   └── 021_avatar.sql # Foto de perfil: solo la clave del archivo, bajo la carpeta de la propia cuenta
+│   ├── 021_avatar.sql # Foto de perfil: solo la clave del archivo, bajo la carpeta de la propia cuenta
+│   └── 022_user_sessions.sql # Sesiones activas: IP recortada, ubicación aproximada y equipo; toda familia de tokens tiene su sesión
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   ├── 001_seed.sql
 │   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
@@ -193,10 +194,15 @@ recuperación o pasos de MFA cuando existan esas tablas). No depende del backend
 | Formato del teléfono (020)                                                             | `chk_users_phone_format`                                                                                                |
 | Foto de perfil bajo la carpeta de la propia cuenta, con el formato de la API (021)     | `chk_users_avatar_key_owner`, `chk_users_avatar_key_format`                                                             |
 | Clave de la foto y su fecha, juntas (021)                                              | `chk_users_avatar_pair`                                                                                                 |
+| Sesiones solo de cuentas activas; cada token en una sesión de SU cuenta (022)          | `fk_user_sessions_active_user`, `fk_refresh_tokens_session` (FK `(family_id, user_id)`)                                 |
+| Nunca la IP completa: IPv4 sin el último octeto, IPv6 solo el /48 (022)                | `chk_user_sessions_ip_prefix`                                                                                           |
+| La última actividad no retrocede ni es anterior al inicio (022)                         | trigger `trg_refresh_tokens_touch_session` (`GREATEST`), `chk_user_sessions_seen`                                       |
 
 Patrón para cada tabla nueva "de cuenta activa":
 `user_status account_status NOT NULL DEFAULT active CHECK (user_status = active)` y
 `FOREIGN KEY (user_id, user_status) REFERENCES users (id, status) ON DELETE CASCADE`.
 Por qué así y no con triggers: ADR 0009 en `renta-ia-backend/docs/adr/`. Las pruebas que
 intentan violar cada regla con SQL directo están en `renta-ia-backend/tests/integration/accountStatus.test.ts`
-(017), `passwordReset.test.ts` (018), `mfa.test.ts` (019), `profile.test.ts` (020) y `avatar.test.ts` (021).
+(017), `passwordReset.test.ts` (018), `mfa.test.ts` (019), `profile.test.ts` (020), `avatar.test.ts` (021) y
+`userSessions.test.ts` (022). El trigger de 022 no hace cumplir esa regla (la FK compuesta sí): solo
+crea la fila de la sesión con el primer token de la familia y mueve su última actividad; por qué, en ADR 0013.
