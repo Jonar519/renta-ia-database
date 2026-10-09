@@ -26,7 +26,8 @@ renta-ia-database/
 │   ├── 017_account_status_and_invitations.sql # Cuentas pendientes (por invitación) garantizadas por el esquema, invitaciones y email_outbox
 │   ├── 018_password_reset.sql # Tokens de recuperación de contraseña (15 min, un solo uso, solo cuentas activas)
 │   ├── 019_mfa.sql # Segundo factor TOTP: secreto cifrado, códigos de recuperación y pasos del login (solo cuentas activas)
-│   └── 020_profile.sql # Teléfono del perfil y cambio de correo con confirmación (24 h, un solo uso, solo cuentas activas)
+│   ├── 020_profile.sql # Teléfono del perfil y cambio de correo con confirmación (24 h, un solo uso, solo cuentas activas)
+│   └── 021_avatar.sql # Foto de perfil: solo la clave del archivo, bajo la carpeta de la propia cuenta
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   ├── 001_seed.sql
 │   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
@@ -190,10 +191,12 @@ recuperación o pasos de MFA cuando existan esas tablas). No depende del backend
 | Cambio de correo solo para una cuenta activa (020)                                     | `fk_email_change_tokens_active_user`                                                                                    |
 | Cambio de correo: 24 h como máximo, uno pendiente por cuenta, correo normalizado (020) | `chk_email_change_tokens_expiry`, `uq_email_change_tokens_one_open`, `chk_email_change_tokens_new_email`                |
 | Formato del teléfono (020)                                                             | `chk_users_phone_format`                                                                                                |
+| Foto de perfil bajo la carpeta de la propia cuenta, con el formato de la API (021)     | `chk_users_avatar_key_owner`, `chk_users_avatar_key_format`                                                             |
+| Clave de la foto y su fecha, juntas (021)                                              | `chk_users_avatar_pair`                                                                                                 |
 
 Patrón para cada tabla nueva "de cuenta activa":
 `user_status account_status NOT NULL DEFAULT active CHECK (user_status = active)` y
 `FOREIGN KEY (user_id, user_status) REFERENCES users (id, status) ON DELETE CASCADE`.
 Por qué así y no con triggers: ADR 0009 en `renta-ia-backend/docs/adr/`. Las pruebas que
 intentan violar cada regla con SQL directo están en `renta-ia-backend/tests/integration/accountStatus.test.ts`
-(017), `passwordReset.test.ts` (018), `mfa.test.ts` (019) y `profile.test.ts` (020).
+(017), `passwordReset.test.ts` (018), `mfa.test.ts` (019), `profile.test.ts` (020) y `avatar.test.ts` (021).
