@@ -41,7 +41,8 @@ renta-ia-database/
 │   ├── fingerprint.sh            # Huella de una base (migraciones, filas por tabla, hash del esquema): solo lectura
 │   └── seed.sh / seed.bat        # Carga los datos de prueba
 ├── docs/
-│   └── erd.png             # Diagrama entidad-relación
+│   ├── modelo-de-dominio.md # Roles, entidades, ciclos de vida y reglas (con diagrama al día)
+│   └── erd.png             # Diagrama entidad-relación del esquema inicial (001–009)
 └── docker-compose.yml    # Postgres + pgvector para desarrollo local
 ```
 
@@ -133,25 +134,34 @@ SELECT filename, applied_at FROM schema_migrations ORDER BY filename;
 - No usar `CREATE INDEX CONCURRENTLY`: los scripts ejecutan cada archivo dentro de una transacción, y `CONCURRENTLY` no puede correr dentro de una.
 - El backend (`renta-ia-backend`) consume este esquema a través de Prisma; el archivo `schema.prisma` de ese repositorio debe reflejar exactamente estas tablas. Cualquier cambio aquí implica actualizar el `schema.prisma` correspondiente.
 
-## Diagrama entidad-relación
+## Modelo de dominio y diagrama entidad-relación
 
-Ver [`docs/erd.png`](docs/erd.png). Resumen de entidades:
+El **modelo de dominio** ([`docs/modelo-de-dominio.md`](docs/modelo-de-dominio.md)) explica los roles,
+el diagrama de entidades **al día** (Mermaid), los ciclos de vida (cuenta, documento, concepto,
+sesión) y qué regla hace cumplir la base y cuál la API. [`docs/erd.png`](docs/erd.png) es el
+diagrama del esquema inicial (001–009). Resumen de entidades:
 
-| Entidad                            | Descripción                                                                        |
-| ---------------------------------- | ---------------------------------------------------------------------------------- |
-| `users`                            | Contadores, asistentes, administradores y clientes con acceso a la plataforma      |
-| `clients`                          | Personas naturales o pequeñas empresas cuya declaración de renta se gestiona       |
-| `documents`                        | Metadatos de cada documento subido (el archivo original vive en S3)                |
-| `tax_concepts`                     | Cifras tributarias estructuradas, extraídas por IA de cada documento               |
-| `document_embeddings`              | Vectores semánticos de cada documento, usados para RAG                             |
-| `alerts`                           | Vencimientos e inconsistencias detectadas                                          |
-| `ai_conversations` / `ai_messages` | Historial del chat conversacional con el asistente de IA                           |
-| `web_vitals`                       | Métricas de experiencia real de usuario (LCP, INP, CLS…)                           |
-| `refresh_tokens`                   | Sesiones: hash de cada refresh token, su familia de rotación y su revocación       |
-| `login_attempts`                   | Fallos de login por cuenta (clave = SHA-256 del correo) para el bloqueo progresivo |
-| `audit_log`                        | Quién hizo qué, sobre qué entidad y cuándo (login, accesos, subidas, CRUD)         |
-| `accountant_assistants`            | Qué asistentes trabajan para qué contador (rol `assistant`)                        |
-| `schema_migrations`                | Historial de migraciones aplicadas (lo gestionan los scripts)                      |
+| Entidad                                              | Descripción                                                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `users`                                              | Contadores, asistentes, administradores y clientes con acceso a la plataforma                                        |
+| `clients`                                            | Personas naturales o pequeñas empresas cuya declaración de renta se gestiona                                         |
+| `documents`                                          | Metadatos de cada documento subido (el archivo original vive en el almacenamiento: disco local hoy, S3 al desplegar) |
+| `tax_concepts`                                       | Cifras tributarias extraídas por IA de cada documento, con lo que leyó la IA, la fuente y la revisión humana (026)   |
+| `document_embeddings`                                | Vectores semánticos de cada documento, usados para RAG                                                               |
+| `alerts`                                             | Vencimientos e inconsistencias detectadas                                                                            |
+| `ai_conversations` / `ai_messages`                   | Historial del chat conversacional con el asistente de IA                                                             |
+| `web_vitals`                                         | Métricas de experiencia real de usuario (LCP, INP, CLS…)                                                             |
+| `refresh_tokens`                                     | Sesiones: hash de cada refresh token, su familia de rotación y su revocación                                         |
+| `login_attempts`                                     | Fallos de login por cuenta (clave = SHA-256 del correo) para el bloqueo progresivo                                   |
+| `audit_log`                                          | Quién hizo qué, sobre qué entidad y cuándo (login, accesos, subidas, CRUD)                                           |
+| `accountant_assistants`                              | Qué asistentes trabajan para qué contador (rol `assistant`)                                                          |
+| `user_invitations`                                   | Invitación vigente de una cuenta pendiente (solo el hash del token, 72 h)                                            |
+| `email_outbox`                                       | Correos enviados; con el proveedor simulado, también su cuerpo                                                       |
+| `password_reset_tokens`                              | Enlaces de recuperación de contraseña (solo el hash, 15 min)                                                         |
+| `user_mfa` · `mfa_recovery_codes` · `mfa_challenges` | Verificación en dos pasos: secreto cifrado, códigos de recuperación (hash) y pasos del login                         |
+| `email_change_tokens`                                | Cambios de correo pendientes de confirmar (solo el hash, 24 h)                                                       |
+| `user_sessions`                                      | Sesiones activas: IP recortada, ubicación aproximada y equipo (022)                                                  |
+| `schema_migrations`                                  | Historial de migraciones aplicadas (lo gestionan los scripts)                                                        |
 
 ## Datos de prueba (seed)
 
@@ -177,33 +187,33 @@ Desde la Fase 5 las cuentas se crean solo por invitación. Una cuenta `invited` 
 tiene contraseña y **la base impide** que tenga sesiones (y, con el mismo patrón, tokens de
 recuperación o pasos de MFA cuando existan esas tablas). No depende del backend.
 
-| Regla                                                                                  | Restricción                                                                                                             |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Pendiente ⇔ sin contraseña                                                             | `chk_users_password_by_status`                                                                                          |
-| Sesión solo de una cuenta activa                                                       | `refresh_tokens.user_status` con `CHECK = active` + FK compuesta `fk_refresh_tokens_active_user` → `users (id, status)` |
-| No volver pendiente una cuenta con sesiones                                            | La misma FK, `ON UPDATE NO ACTION`                                                                                      |
-| Invitación solo para una cuenta pendiente                                              | `fk_user_invitations_invited_user` + `CHECK (user_status = invited)`                                                    |
-| Vigencia de 72 h como máximo                                                           | `chk_user_invitations_expiry`                                                                                           |
-| Una invitación vigente por cuenta                                                      | índice único parcial `uq_user_invitations_one_open`                                                                     |
-| Solo el hash del token                                                                 | `token_hash ~ ^[0-9a-f]{64}`                                                                                            |
-| Cuerpo del correo solo con el proveedor simulado                                       | `chk_email_outbox_body_only_mock`                                                                                       |
-| Token de recuperación solo para una cuenta activa (018)                                | `fk_password_reset_tokens_active_user` + `CHECK (user_status = active)`                                                 |
-| Recuperación: vigencia de 15 min como máximo (018)                                     | `chk_password_reset_tokens_expiry`                                                                                      |
-| Un token de recuperación vigente por cuenta (018)                                      | índice único parcial `uq_password_reset_tokens_one_open`                                                                |
-| MFA solo para una cuenta activa (019)                                                  | `fk_user_mfa_active_user`; códigos de recuperación y pasos del login cuelgan de `user_mfa`                              |
-| Secreto TOTP solo cifrado (019)                                                        | `chk_user_mfa_ciphertext_format` (formato `v1.` de AES-256-GCM)                                                         |
-| Paso del login: 5 min y 5 intentos como máximo (019)                                   | `chk_mfa_challenges_expiry`, `chk_mfa_challenges_attempts`                                                              |
-| Cambio de correo solo para una cuenta activa (020)                                     | `fk_email_change_tokens_active_user`                                                                                    |
-| Cambio de correo: 24 h como máximo, uno pendiente por cuenta, correo normalizado (020) | `chk_email_change_tokens_expiry`, `uq_email_change_tokens_one_open`, `chk_email_change_tokens_new_email`                |
-| Formato del teléfono (020)                                                             | `chk_users_phone_format`                                                                                                |
-| Foto de perfil bajo la carpeta de la propia cuenta, con el formato de la API (021)     | `chk_users_avatar_key_owner`, `chk_users_avatar_key_format`                                                             |
-| Clave de la foto y su fecha, juntas (021)                                              | `chk_users_avatar_pair`                                                                                                 |
-| Sesiones solo de cuentas activas; cada token en una sesión de SU cuenta (022)          | `fk_user_sessions_active_user`, `fk_refresh_tokens_session` (FK `(family_id, user_id)`)                                 |
-| Nunca la IP completa: IPv4 sin el último octeto, IPv6 solo el /48 (022)                | `chk_user_sessions_ip_prefix`                                                                                           |
-| Cuenta eliminada sin nombre, correo real, teléfono, foto ni contraseña (024)            | `chk_users_deleted_scrubbed`, `chk_users_password_by_status`, `chk_users_deleted_at`                                    |
-| Un cliente siempre tiene un contador ACTIVO: un contador con clientes no se elimina (024) | `fk_clients_active_accountant` (FK `(accountant_user_id, accountant_status)`)                                         |
-| Concepto: si dice "de la IA", el monto es el que leyó la IA; si lo corrigió una persona, está revisado; revisión con fecha y autor juntos (026) | `chk_tax_concepts_ai_amount_kept`, `chk_tax_concepts_person_reviewed`, `chk_tax_concepts_review_pair` |
-| La última actividad no retrocede ni es anterior al inicio (022)                         | trigger `trg_refresh_tokens_touch_session` (`GREATEST`), `chk_user_sessions_seen`                                       |
+| Regla                                                                                                                                           | Restricción                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Pendiente ⇔ sin contraseña                                                                                                                      | `chk_users_password_by_status`                                                                                          |
+| Sesión solo de una cuenta activa                                                                                                                | `refresh_tokens.user_status` con `CHECK = active` + FK compuesta `fk_refresh_tokens_active_user` → `users (id, status)` |
+| No volver pendiente una cuenta con sesiones                                                                                                     | La misma FK, `ON UPDATE NO ACTION`                                                                                      |
+| Invitación solo para una cuenta pendiente                                                                                                       | `fk_user_invitations_invited_user` + `CHECK (user_status = invited)`                                                    |
+| Vigencia de 72 h como máximo                                                                                                                    | `chk_user_invitations_expiry`                                                                                           |
+| Una invitación vigente por cuenta                                                                                                               | índice único parcial `uq_user_invitations_one_open`                                                                     |
+| Solo el hash del token                                                                                                                          | `token_hash ~ ^[0-9a-f]{64}`                                                                                            |
+| Cuerpo del correo solo con el proveedor simulado                                                                                                | `chk_email_outbox_body_only_mock`                                                                                       |
+| Token de recuperación solo para una cuenta activa (018)                                                                                         | `fk_password_reset_tokens_active_user` + `CHECK (user_status = active)`                                                 |
+| Recuperación: vigencia de 15 min como máximo (018)                                                                                              | `chk_password_reset_tokens_expiry`                                                                                      |
+| Un token de recuperación vigente por cuenta (018)                                                                                               | índice único parcial `uq_password_reset_tokens_one_open`                                                                |
+| MFA solo para una cuenta activa (019)                                                                                                           | `fk_user_mfa_active_user`; códigos de recuperación y pasos del login cuelgan de `user_mfa`                              |
+| Secreto TOTP solo cifrado (019)                                                                                                                 | `chk_user_mfa_ciphertext_format` (formato `v1.` de AES-256-GCM)                                                         |
+| Paso del login: 5 min y 5 intentos como máximo (019)                                                                                            | `chk_mfa_challenges_expiry`, `chk_mfa_challenges_attempts`                                                              |
+| Cambio de correo solo para una cuenta activa (020)                                                                                              | `fk_email_change_tokens_active_user`                                                                                    |
+| Cambio de correo: 24 h como máximo, uno pendiente por cuenta, correo normalizado (020)                                                          | `chk_email_change_tokens_expiry`, `uq_email_change_tokens_one_open`, `chk_email_change_tokens_new_email`                |
+| Formato del teléfono (020)                                                                                                                      | `chk_users_phone_format`                                                                                                |
+| Foto de perfil bajo la carpeta de la propia cuenta, con el formato de la API (021)                                                              | `chk_users_avatar_key_owner`, `chk_users_avatar_key_format`                                                             |
+| Clave de la foto y su fecha, juntas (021)                                                                                                       | `chk_users_avatar_pair`                                                                                                 |
+| Sesiones solo de cuentas activas; cada token en una sesión de SU cuenta (022)                                                                   | `fk_user_sessions_active_user`, `fk_refresh_tokens_session` (FK `(family_id, user_id)`)                                 |
+| Nunca la IP completa: IPv4 sin el último octeto, IPv6 solo el /48 (022)                                                                         | `chk_user_sessions_ip_prefix`                                                                                           |
+| Cuenta eliminada sin nombre, correo real, teléfono, foto ni contraseña (024)                                                                    | `chk_users_deleted_scrubbed`, `chk_users_password_by_status`, `chk_users_deleted_at`                                    |
+| Un cliente siempre tiene un contador ACTIVO: un contador con clientes no se elimina (024)                                                       | `fk_clients_active_accountant` (FK `(accountant_user_id, accountant_status)`)                                           |
+| Concepto: si dice "de la IA", el monto es el que leyó la IA; si lo corrigió una persona, está revisado; revisión con fecha y autor juntos (026) | `chk_tax_concepts_ai_amount_kept`, `chk_tax_concepts_person_reviewed`, `chk_tax_concepts_review_pair`                   |
+| La última actividad no retrocede ni es anterior al inicio (022)                                                                                 | trigger `trg_refresh_tokens_touch_session` (`GREATEST`), `chk_user_sessions_seen`                                       |
 
 Patrón para cada tabla nueva "de cuenta activa":
 `user_status account_status NOT NULL DEFAULT active CHECK (user_status = active)` y
