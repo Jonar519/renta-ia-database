@@ -31,7 +31,8 @@ renta-ia-database/
 │   ├── 022_user_sessions.sql # Sesiones activas: IP recortada, ubicación aproximada y equipo; toda familia de tokens tiene su sesión
 │   ├── 023_account_status_deleted.sql # Estado deleted (sola: un valor nuevo de enum no se usa en su misma transacción)
 │   ├── 024_account_deletion.sql # Cuenta eliminada = lápida anónima; un cliente exige un contador activo
-│   └── 025_table_density.sql # Densidad de las tablas: preferencia de trabajo de la cuenta (cómoda o compacta)
+│   ├── 025_table_density.sql # Densidad de las tablas: preferencia de trabajo de la cuenta (cómoda o compacta)
+│   └── 026_concept_review.sql # Revisión humana de conceptos: valor original de la IA, fuente, quién y cuándo
 ├── seed/                 # Datos de prueba (solo desarrollo/demo)
 │   ├── 001_seed.sql
 │   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
@@ -201,6 +202,7 @@ recuperación o pasos de MFA cuando existan esas tablas). No depende del backend
 | Nunca la IP completa: IPv4 sin el último octeto, IPv6 solo el /48 (022)                | `chk_user_sessions_ip_prefix`                                                                                           |
 | Cuenta eliminada sin nombre, correo real, teléfono, foto ni contraseña (024)            | `chk_users_deleted_scrubbed`, `chk_users_password_by_status`, `chk_users_deleted_at`                                    |
 | Un cliente siempre tiene un contador ACTIVO: un contador con clientes no se elimina (024) | `fk_clients_active_accountant` (FK `(accountant_user_id, accountant_status)`)                                         |
+| Concepto: si dice "de la IA", el monto es el que leyó la IA; si lo corrigió una persona, está revisado; revisión con fecha y autor juntos (026) | `chk_tax_concepts_ai_amount_kept`, `chk_tax_concepts_person_reviewed`, `chk_tax_concepts_review_pair` |
 | La última actividad no retrocede ni es anterior al inicio (022)                         | trigger `trg_refresh_tokens_touch_session` (`GREATEST`), `chk_user_sessions_seen`                                       |
 
 Patrón para cada tabla nueva "de cuenta activa":
