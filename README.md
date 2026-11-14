@@ -1,225 +1,189 @@
-# renta-ia-database
+# renta-ia-database: la base de datos de Renta IA
 
-Esquema, migraciones y datos de prueba de la base de datos del **Sistema de Gestión Documental Contable con IA**. Este repositorio es la única fuente de verdad sobre la estructura de la base de datos: cualquier cambio al esquema se hace aquí, mediante una nueva migración numerada, nunca directamente sobre la base de datos.
+Este repositorio es la **única fuente de verdad** del esquema de PostgreSQL de **Renta IA**: las
+migraciones SQL numeradas, los datos de prueba (seed) y el modelo de dominio. El backend solo lo
+consume (Prisma como cliente). La **guía completa para evaluar el proyecto** (acceso, roles y la prueba
+de cada función paso a paso) está en el README principal, en
+[renta-ia-backend](https://github.com/Jonar519/renta-ia-backend#readme).
 
-## Contenido del repositorio
+## Contenido
 
+1. [Qué es](#1-qué-es)
+2. [Cómo funciona](#2-cómo-funciona)
+3. [Tecnologías](#3-tecnologías)
+4. [Qué se necesita](#4-qué-se-necesita)
+5. [Acceso y roles](#5-acceso-y-roles)
+6. [Guía de pruebas de la base](#6-guía-de-pruebas-de-la-base)
+7. [Pruebas automatizadas](#7-pruebas-automatizadas)
+8. [Limitaciones y decisiones de diseño](#8-limitaciones-y-decisiones-de-diseño)
+9. [Solución de problemas](#9-solución-de-problemas)
+10. [Estructura del repositorio](#10-estructura-del-repositorio)
+11. [Glosario](#11-glosario)
+
+## 1. Qué es
+
+La base guarda las cuentas y su seguridad (invitaciones, sesiones, verificación en dos pasos,
+recuperación, auditoría), los clientes de cada contador, los documentos y sus conceptos tributarios
+con la revisión humana, los embeddings para el chat, las alertas, las conversaciones con la IA y las
+métricas de rendimiento web.
+
+Además **protege las reglas por sí misma**: una cuenta pendiente no tiene contraseña ni puede tener
+sesiones, una invitación vence en 72 horas como máximo, solo se guarda el hash de cada token, el
+secreto de la verificación en dos pasos solo se guarda cifrado y el cuerpo de un correo solo se guarda
+con el proveedor simulado. Así se cumplen aunque el backend tenga un error.
+
+## 2. Cómo funciona
+
+- **26 migraciones** (`migrations/001_…sql` a `026_…sql`), cada una aplicada una sola vez y registrada
+  en `schema_migrations`. Una migración aplicada no se edita: un cambio es un archivo nuevo.
+- **Seed** (`seed/001_seed.sql`): 3 usuarios, 2 clientes, 2 documentos y algunos conceptos y alertas
+  de ejemplo para desarrollo. Se puede cargar varias veces sin duplicar y **nunca** se carga en
+  producción.
+- **El backend no migra:** sus tests crean una base desechable con estas mismas migraciones (por eso
+  los repositorios deben estar en carpetas hermanas).
+
+```mermaid
+erDiagram
+  USERS ||--o{ CLIENTS : "contador de"
+  USERS ||--o{ ACCOUNTANT_ASSISTANTS : "asistente de"
+  CLIENTS ||--o{ DOCUMENTS : "tiene"
+  DOCUMENTS ||--o{ TAX_CONCEPTS : "cifras extraídas"
+  DOCUMENTS ||--o{ DOCUMENT_EMBEDDINGS : "fragmentos para el chat"
+  CLIENTS ||--o{ ALERTS : "avisos"
+  CLIENTS ||--o{ AI_CONVERSATIONS : "chat"
+  USERS ||--o{ USER_SESSIONS : "sesiones"
+  USERS ||--o| USER_INVITATIONS : "invitación"
 ```
-renta-ia-database/
-├── migrations/          # Scripts SQL numerados, se ejecutan en orden
-│   ├── 001_extensions.sql
-│   ├── 002_enums.sql
-│   ├── 003_users.sql
-│   ├── 004_clients.sql
-│   ├── 005_documents.sql
-│   ├── 006_tax_concepts.sql
-│   ├── 007_document_embeddings.sql
-│   ├── 008_alerts.sql
-│   ├── 009_ai_conversations_and_messages.sql
-│   ├── 010_hardening.sql # Índices, UNIQUE/CHECK, email sin mayúsculas, updated_at automático
-│   ├── 011_alert_dedupe.sql # dedupe_key + índice único parcial: una alerta activa por situación
-│   ├── 012_document_sha256.sql # SHA-256 del archivo: evita subir dos veces el mismo documento a un cliente
-│   ├── 013_web_vitals.sql # Métricas Web Vitals (RUM) enviadas por el frontend
-│   ├── 014_sessions_and_login_attempts.sql # Refresh tokens rotativos (solo su hash) y bloqueo progresivo de login
-│   ├── 015_audit_log.sql # Registro de auditoría (sin datos sensibles)
-│   ├── 016_roles.sql # Asistentes asignados a contadores y usuario de portal de cada cliente
-│   ├── 017_account_status_and_invitations.sql # Cuentas pendientes (por invitación) garantizadas por el esquema, invitaciones y email_outbox
-│   ├── 018_password_reset.sql # Tokens de recuperación de contraseña (15 min, un solo uso, solo cuentas activas)
-│   ├── 019_mfa.sql # Segundo factor TOTP: secreto cifrado, códigos de recuperación y pasos del login (solo cuentas activas)
-│   ├── 020_profile.sql # Teléfono del perfil y cambio de correo con confirmación (24 h, un solo uso, solo cuentas activas)
-│   ├── 021_avatar.sql # Foto de perfil: solo la clave del archivo, bajo la carpeta de la propia cuenta
-│   ├── 022_user_sessions.sql # Sesiones activas: IP recortada, ubicación aproximada y equipo; toda familia de tokens tiene su sesión
-│   ├── 023_account_status_deleted.sql # Estado deleted (sola: un valor nuevo de enum no se usa en su misma transacción)
-│   ├── 024_account_deletion.sql # Cuenta eliminada = lápida anónima; un cliente exige un contador activo
-│   ├── 025_table_density.sql # Densidad de las tablas: preferencia de trabajo de la cuenta (cómoda o compacta)
-│   └── 026_concept_review.sql # Revisión humana de conceptos: valor original de la IA, fuente, quién y cuándo
-├── seed/                 # Datos de prueba (solo desarrollo/demo)
-│   ├── 001_seed.sql
-│   └── perf/001_heavy_dataset.sql # Datos sintéticos masivos para mediciones de rendimiento (no los carga seed.bat)
-├── scripts/
-│   ├── migrate.sh / migrate.bat  # Aplica las migraciones pendientes (bash · cmd.exe)
-│   ├── fingerprint.sh            # Huella de una base (migraciones, filas por tabla, hash del esquema): solo lectura
-│   └── seed.sh / seed.bat        # Carga los datos de prueba
-├── docs/
-│   ├── modelo-de-dominio.md # Roles, entidades, ciclos de vida y reglas (con diagrama al día)
-│   └── erd.png             # Diagrama entidad-relación del esquema inicial (001–009)
-└── docker-compose.yml    # Postgres + pgvector para desarrollo local
-```
 
-## Motor de base de datos
+El modelo completo (roles, entidades, ciclos de vida y qué regla hace cumplir la base y cuál la API)
+está en [docs/modelo-de-dominio.md](docs/modelo-de-dominio.md); la lista de tablas y las garantías del
+esquema, en la [referencia técnica](docs/referencia-tecnica.md).
 
-- **PostgreSQL 16** con la extensión **pgvector** (búsqueda semántica para RAG) y **pgcrypto** (generación de UUIDs).
-- En producción se usa **Amazon RDS for PostgreSQL** (versión 15.3 o superior, que soporta pgvector de forma nativa).
+## 3. Tecnologías
 
-## Cómo levantar la base de datos en local
+| Tecnología                        | Versión                              | Para qué se usa                                                | Por qué se eligió                                                                 |
+| --------------------------------- | ------------------------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **PostgreSQL**                    | 16 (imagen `pgvector/pgvector:pg16`) | Base de datos                                                  | Restricciones, FKs compuestas e índices únicos parciales para proteger las reglas. |
+| **pgvector** · **pgcrypto**       | extensiones                          | Embeddings para el chat (RAG) · generación de UUID             | Datos y vectores en la misma base.                                                |
+| **SQL puro** + scripts `.bat`/`.sh` | —                                  | Migraciones y seed                                             | Sin ORM gestionando el esquema: lo que se revisa es exactamente lo que corre.     |
+| **Docker Compose**                | —                                    | PostgreSQL en el puerto 5433 en desarrollo                     | Mismo entorno en cualquier equipo.                                                |
+| **GitHub Actions** · **gitleaks** | gitleaks `v8.21.2`                   | Migraciones sobre una base vacía, repetibles, seed idempotente y secretos | Cada `push` demuestra que el esquema se crea de cero.                    |
+| **Railway**                       | —                                    | PostgreSQL con pgvector en producción                          | Mismo proyecto que la API y el worker.                                            |
 
-El `docker-compose.yml` publica Postgres en el puerto **5433** del host (`5433:5432`), para no chocar con un Postgres instalado localmente en el 5432. Usuario/contraseña: `postgres`/`postgres`, base `renta_ia`.
+## 4. Qué se necesita
 
-### Windows (cmd.exe): no necesita `psql` instalado
-
-Para otra base (por ejemplo la de E2E), créala una vez y define `DB_NAME` antes de migrar:
+- **Para evaluar en producción:** nada de este repositorio; solo el navegador (ver
+  [Qué necesita el profesor](https://github.com/Jonar519/renta-ia-backend#4-qué-necesita-el-profesor)).
+- **Para levantar la base en local:** Docker Desktop en marcha. En Windows (`cmd.exe`) no hace falta
+  `psql`; en Linux o macOS, sí (lo usan los scripts `.sh`).
 
 ```bat
-docker exec renta_ia_postgres psql -U postgres -c "CREATE DATABASE renta_ia_e2e"
-set DB_NAME=renta_ia_e2e
-scripts\migrate.bat
-```
-
-Los `.bat` ejecutan `psql` dentro del contenedor (`docker exec`):
-
-```bat
-:: 1. Levantar el contenedor de Postgres con pgvector
+cd renta-ia-database
 docker compose up -d
-
-:: 2. Aplicar las migraciones pendientes
 scripts\migrate.bat
-
-:: 3. (Opcional) cargar datos de prueba
 scripts\seed.bat
 ```
 
-### Linux / macOS / Git Bash: requiere `psql` en el host
+En Linux o macOS:
 
 ```bash
-# 1. Levantar el contenedor de Postgres con pgvector
+cd renta-ia-database
 docker compose up -d
-
-# 2. Exportar la cadena de conexión (usada por los scripts)
 export DATABASE_URL="postgresql://postgres:postgres@localhost:5433/renta_ia"
-
-# 3. Aplicar las migraciones pendientes
 ./scripts/migrate.sh
-
-# 4. (Opcional) cargar datos de prueba
 ./scripts/seed.sh
 ```
 
-Para conectarte manualmente y explorar las tablas:
+Esperado: la migración aplica hasta `026_concept_review.sql` y el seed termina con
+`Datos de prueba cargados correctamente.` Conexión de desarrollo (solo local):
 
-```bash
-psql "$DATABASE_URL"
+```ini
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/renta_ia
 ```
 
-## Cómo aplicar migraciones contra RDS (staging/producción)
+Después sigue con el backend y el frontend:
+[opción local](https://github.com/Jonar519/renta-ia-backend#b-opción-local-opcional).
 
-```bash
-export DATABASE_URL="postgresql://<usuario>:<password>@<endpoint-rds>.rds.amazonaws.com:5432/renta_ia"
-./scripts/migrate.sh
+## 5. Acceso y roles
+
+En la base, los roles son `admin`, `accountant` (contador), `assistant` (asistente de un contador) y
+`client` (contribuyente con acceso a su expediente). Cómo se entra a la aplicación, las invitaciones y
+la verificación en dos pasos:
+[Acceso y roles](https://github.com/Jonar519/renta-ia-backend#5-acceso-y-roles).
+
+Las cuentas del seed (`ana@example.com`, contadora; `luis@example.com`, su asistente;
+`admin@example.com`, administrador) **solo existen en local**; su contraseña de prueba está en la
+[referencia técnica](docs/referencia-tecnica.md#datos-de-prueba-seed). En producción no se carga el seed.
+
+## 6. Guía de pruebas de la base
+
+Con la base local levantada (sección 4). Las funciones de la aplicación se prueban con la
+[guía principal](https://github.com/Jonar519/renta-ia-backend#6-guía-de-pruebas-función-por-función).
+
+| Función                           | Qué hace                                             | Pasos para probarla                                                                                                                                                         | Resultado esperado                                                                                 |
+| --------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Migraciones repetibles            | Aplica solo lo pendiente                             | Corre `scripts\migrate.bat` dos veces                                                                                                                                       | La segunda vez: `Listo: 0 migracion(es) nueva(s) aplicada(s).`                                     |
+| Seed idempotente                  | Recargar los datos de prueba no duplica              | Corre `scripts\seed.bat` dos veces y cuenta: `docker exec renta_ia_postgres psql -U postgres -d renta_ia -At -c "SELECT count(*) FROM users WHERE email LIKE '%@example.com'"` | El mismo número las dos veces.                                                                     |
+| Regla: cuenta pendiente sin contraseña | Una cuenta activa no puede volver a pendiente con contraseña | `docker exec renta_ia_postgres psql -U postgres -d renta_ia -c "BEGIN; UPDATE users SET status = 'invited' WHERE email = 'ana@example.com'; ROLLBACK;"`        | `ERROR: new row for relation "users" violates check constraint "chk_users_password_by_status"`.    |
+| Regla: formato del teléfono       | La base rechaza un teléfono inválido                 | `docker exec renta_ia_postgres psql -U postgres -d renta_ia -c "BEGIN; UPDATE users SET phone = 'abc' WHERE email = 'ana@example.com'; ROLLBACK;"`                          | `ERROR: new row for relation "users" violates check constraint "chk_users_phone_format"`.          |
+| Modelo de dominio                 | Documenta roles, entidades, ciclos de vida y reglas  | Abre [docs/modelo-de-dominio.md](docs/modelo-de-dominio.md)                                                                                                                 | Diagrama al día (Mermaid) y cada regla con dónde se aplica.                                        |
+
+## 7. Pruebas automatizadas
+
+| Comando o paso                               | Qué cubre                                                                                                      | Resultado esperado                               |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| CI (`.github/workflows/`)                    | Migraciones sobre una base vacía, segunda corrida sin cambios, seed dos veces, todas registradas, base creada antes de `schema_migrations` y gitleaks | En verde en cada `push`.          |
+| `scripts\migrate.bat` y `scripts\seed.bat`   | Lo mismo a mano, en local                                                                                      | 26 migraciones la primera vez, 0 la segunda.     |
+
+Las reglas de la base también las prueban los tests de integración de `renta-ia-backend`, que aplican
+estas migraciones en su propia base desechable.
+
+## 8. Limitaciones y decisiones de diseño
+
+- **El seed es solo para desarrollo:** sus contraseñas de prueba son públicas y anteriores a la
+  política actual (sirven para entrar, pero el registro ya no las aceptaría). En producción no se carga.
+- **El administrador del seed no trae la verificación en dos pasos activa:** el secreto se cifra con la
+  clave de cada instalación, que la base no conoce; la activa en su primer ingreso.
+- **Sin pruebas SQL propias:** las reglas se comprueban desde los tests del backend y la CI de este
+  repositorio verifica que el esquema se crea de cero.
+- **Las migraciones no corren solas en producción:** se aplican con el mismo script antes de desplegar.
+- **`docs/erd.png` muestra el esquema inicial (001–009);** el diagrama al día está en el modelo de
+  dominio.
+
+## 9. Solución de problemas
+
+| Síntoma                                                  | Qué hacer                                                                                                |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `docker compose up -d` falla: puerto 5433 ocupado        | Otro servicio usa el puerto: detenlo o cambia el puerto publicado (y el `DATABASE_URL` del backend).      |
+| `migrate.bat` no se conecta                              | Docker Desktop no está en marcha o falta `docker compose up -d`.                                         |
+| `migrate.sh` o `seed.sh`: `psql: command not found`      | Instala el cliente de PostgreSQL, o usa los `.bat` en Windows.                                           |
+| `ERROR: define la variable de entorno DATABASE_URL`      | En Linux o macOS: `export DATABASE_URL="postgresql://postgres:postgres@localhost:5433/renta_ia"`.        |
+| No puedo entrar con una cuenta del seed                  | Vuelve a cargar el seed (actualiza los hashes de las contraseñas de prueba) y revisa que sea en local.   |
+
+## 10. Estructura del repositorio
+
+```
+renta-ia-database/
+├── migrations/          # 001 … 026: extensiones, tipos, tablas, reglas y endurecimiento, en orden
+├── seed/001_seed.sql    # datos de prueba (solo desarrollo)
+├── scripts/             # migrate y seed en .bat (Windows) y .sh (Linux, macOS y CI); fingerprint.sh
+├── docs/
+│   ├── modelo-de-dominio.md   # roles, entidades, ciclos de vida y reglas
+│   ├── referencia-tecnica.md  # motor, migraciones, tablas, seed y garantías del esquema
+│   └── erd.png                # diagrama del esquema inicial
+└── docker-compose.yml   # PostgreSQL 16 + pgvector
 ```
 
-**Importante:** antes de la primera migración en RDS, conéctate una vez como usuario maestro y confirma que las extensiones estén disponibles:
+## 11. Glosario
 
-```sql
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS vector;
-```
+| Término                  | Qué significa aquí                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| **Migración**            | Archivo SQL numerado que cambia el esquema; se aplica una vez y queda registrado.                     |
+| **Seed**                 | Datos de prueba que se cargan en una base de desarrollo.                                              |
+| **Idempotente**          | Que se puede ejecutar varias veces con el mismo resultado.                                            |
+| **CHECK / FK compuesta** | Condición que toda fila debe cumplir / referencia a varias columnas a la vez (por ejemplo, id y estado de la cuenta). |
+| **Índice único parcial** | Unicidad solo entre las filas que cumplen una condición (por ejemplo, una invitación vigente por cuenta). |
+| **Embedding / pgvector** | Lista de números que representa el significado de un texto / extensión que los guarda y compara.      |
 
-RDS permite `pgvector` desde el parameter group por defecto en versiones recientes de Postgres 15/16; si el `CREATE EXTENSION vector` falla, verifica la versión del motor y el parameter group asociado a la instancia.
-
-## Historial de migraciones (`schema_migrations`)
-
-Los scripts registran cada migración aplicada en la tabla `schema_migrations` (`filename`, `applied_at`) y **saltan las que ya corrieron**, así que `migrate` se puede ejecutar cuantas veces se quiera. Cada migración y su registro corren en **una sola transacción**: si una falla, no queda aplicada a medias ni marcada como aplicada.
-
-**Bases creadas antes de este mecanismo:** si la base ya tiene las tablas pero `schema_migrations` está vacía, los scripts registran 001–009 como ya aplicadas (_baseline_) y solo ejecutan las nuevas (010 en adelante). No hace falta recrear la base.
-
-```sql
--- Ver qué migraciones tiene aplicadas una base
-SELECT filename, applied_at FROM schema_migrations ORDER BY filename;
-```
-
-## Convención de migraciones
-
-- Cada archivo se numera secuencialmente (`0NN_descripcion.sql`) y **nunca se modifica** después de haberse aplicado en cualquier entorno compartido (staging o producción). Un cambio de esquema siempre se hace con una migración nueva.
-- Gracias a `schema_migrations` las migraciones no necesitan ser idempotentes, pero conviene que lo sean cuando es barato (`IF NOT EXISTS`).
-- No usar `CREATE INDEX CONCURRENTLY`: los scripts ejecutan cada archivo dentro de una transacción, y `CONCURRENTLY` no puede correr dentro de una.
-- El backend (`renta-ia-backend`) consume este esquema a través de Prisma; el archivo `schema.prisma` de ese repositorio debe reflejar exactamente estas tablas. Cualquier cambio aquí implica actualizar el `schema.prisma` correspondiente.
-
-## Modelo de dominio y diagrama entidad-relación
-
-El **modelo de dominio** ([`docs/modelo-de-dominio.md`](docs/modelo-de-dominio.md)) explica los roles,
-el diagrama de entidades **al día** (Mermaid), los ciclos de vida (cuenta, documento, concepto,
-sesión) y qué regla hace cumplir la base y cuál la API. [`docs/erd.png`](docs/erd.png) es el
-diagrama del esquema inicial (001–009). Resumen de entidades:
-
-| Entidad                                              | Descripción                                                                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `users`                                              | Contadores, asistentes, administradores y clientes con acceso a la plataforma                                        |
-| `clients`                                            | Personas naturales o pequeñas empresas cuya declaración de renta se gestiona                                         |
-| `documents`                                          | Metadatos de cada documento subido (el archivo original vive en el almacenamiento: disco local hoy, S3 al desplegar) |
-| `tax_concepts`                                       | Cifras tributarias extraídas por IA de cada documento, con lo que leyó la IA, la fuente y la revisión humana (026)   |
-| `document_embeddings`                                | Vectores semánticos de cada documento, usados para RAG                                                               |
-| `alerts`                                             | Vencimientos e inconsistencias detectadas                                                                            |
-| `ai_conversations` / `ai_messages`                   | Historial del chat conversacional con el asistente de IA                                                             |
-| `web_vitals`                                         | Métricas de experiencia real de usuario (LCP, INP, CLS…)                                                             |
-| `refresh_tokens`                                     | Sesiones: hash de cada refresh token, su familia de rotación y su revocación                                         |
-| `login_attempts`                                     | Fallos de login por cuenta (clave = SHA-256 del correo) para el bloqueo progresivo                                   |
-| `audit_log`                                          | Quién hizo qué, sobre qué entidad y cuándo (login, accesos, subidas, CRUD)                                           |
-| `accountant_assistants`                              | Qué asistentes trabajan para qué contador (rol `assistant`)                                                          |
-| `user_invitations`                                   | Invitación vigente de una cuenta pendiente (solo el hash del token, 72 h)                                            |
-| `email_outbox`                                       | Correos enviados; con el proveedor simulado, también su cuerpo                                                       |
-| `password_reset_tokens`                              | Enlaces de recuperación de contraseña (solo el hash, 15 min)                                                         |
-| `user_mfa` · `mfa_recovery_codes` · `mfa_challenges` | Verificación en dos pasos: secreto cifrado, códigos de recuperación (hash) y pasos del login                         |
-| `email_change_tokens`                                | Cambios de correo pendientes de confirmar (solo el hash, 24 h)                                                       |
-| `user_sessions`                                      | Sesiones activas: IP recortada, ubicación aproximada y equipo (022)                                                  |
-| `schema_migrations`                                  | Historial de migraciones aplicadas (lo gestionan los scripts)                                                        |
-
-## Datos de prueba (seed)
-
-El script `seed/001_seed.sql` crea 3 usuarios, 2 clientes, 2 documentos y algunas alertas/conceptos tributarios de ejemplo, útiles para desarrollar el backend y el frontend sin depender de documentos reales. **No debe ejecutarse en producción.**
-
-Es idempotente: se puede volver a ejecutar sin duplicar datos. Al hacerlo sobre una base sembrada con una versión anterior, actualiza el hash de contraseña de los usuarios de prueba (antes eran hashes de ejemplo que no permitían iniciar sesión).
-
-| Usuario          | Correo              | Rol                                                                         | Contraseña     |
-| ---------------- | ------------------- | --------------------------------------------------------------------------- | -------------- |
-| Ana Contadora    | `ana@example.com`   | accountant                                                                  | `Password123!` |
-| Luis Asistente   | `luis@example.com`  | assistant (trabaja para Ana: ve y edita sus clientes, no los crea ni borra) | `Password123!` |
-| Admin Plataforma | `admin@example.com` | admin                                                                       | `Password123!` |
-
-**Admin del seed y verificación en dos pasos (desde la Fase 5, B9):** para un administrador es obligatoria. La primera vez que `admin@example.com` inicia sesión, la app lo lleva a **Seguridad** y no lo deja usar nada más hasta activarla (contraseña → QR o clave → código de 6 dígitos → códigos de recuperación). El seed no la trae activada: el secreto se cifra con la `MFA_ENCRYPTION_KEY` de cada instalación, que la base no conoce. Para probar sin celular, `renta-ia-backend/docs/demo-fase5.md` (sección B9) trae un comando que calcula el código a partir de la clave que muestra la pantalla. Volver a ejecutar el seed **no** borra un MFA ya activado.
-
-Las contraseñas del seed son anteriores a la política de contraseñas (10+ caracteres, sin comunes): sirven para iniciar sesión, pero el registro ya no aceptaría una así.
-
-Los documentos del seed son solo metadatos: sus archivos no existen en `uploads/` del backend, así que no se pueden reprocesar.
-
-## Cuentas pendientes: garantías del esquema (migración 017)
-
-Desde la Fase 5 las cuentas se crean solo por invitación. Una cuenta `invited` (pendiente) no
-tiene contraseña y **la base impide** que tenga sesiones (y, con el mismo patrón, tokens de
-recuperación o pasos de MFA cuando existan esas tablas). No depende del backend.
-
-| Regla                                                                                                                                           | Restricción                                                                                                             |
-| ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Pendiente ⇔ sin contraseña                                                                                                                      | `chk_users_password_by_status`                                                                                          |
-| Sesión solo de una cuenta activa                                                                                                                | `refresh_tokens.user_status` con `CHECK = active` + FK compuesta `fk_refresh_tokens_active_user` → `users (id, status)` |
-| No volver pendiente una cuenta con sesiones                                                                                                     | La misma FK, `ON UPDATE NO ACTION`                                                                                      |
-| Invitación solo para una cuenta pendiente                                                                                                       | `fk_user_invitations_invited_user` + `CHECK (user_status = invited)`                                                    |
-| Vigencia de 72 h como máximo                                                                                                                    | `chk_user_invitations_expiry`                                                                                           |
-| Una invitación vigente por cuenta                                                                                                               | índice único parcial `uq_user_invitations_one_open`                                                                     |
-| Solo el hash del token                                                                                                                          | `token_hash ~ ^[0-9a-f]{64}`                                                                                            |
-| Cuerpo del correo solo con el proveedor simulado                                                                                                | `chk_email_outbox_body_only_mock`                                                                                       |
-| Token de recuperación solo para una cuenta activa (018)                                                                                         | `fk_password_reset_tokens_active_user` + `CHECK (user_status = active)`                                                 |
-| Recuperación: vigencia de 15 min como máximo (018)                                                                                              | `chk_password_reset_tokens_expiry`                                                                                      |
-| Un token de recuperación vigente por cuenta (018)                                                                                               | índice único parcial `uq_password_reset_tokens_one_open`                                                                |
-| MFA solo para una cuenta activa (019)                                                                                                           | `fk_user_mfa_active_user`; códigos de recuperación y pasos del login cuelgan de `user_mfa`                              |
-| Secreto TOTP solo cifrado (019)                                                                                                                 | `chk_user_mfa_ciphertext_format` (formato `v1.` de AES-256-GCM)                                                         |
-| Paso del login: 5 min y 5 intentos como máximo (019)                                                                                            | `chk_mfa_challenges_expiry`, `chk_mfa_challenges_attempts`                                                              |
-| Cambio de correo solo para una cuenta activa (020)                                                                                              | `fk_email_change_tokens_active_user`                                                                                    |
-| Cambio de correo: 24 h como máximo, uno pendiente por cuenta, correo normalizado (020)                                                          | `chk_email_change_tokens_expiry`, `uq_email_change_tokens_one_open`, `chk_email_change_tokens_new_email`                |
-| Formato del teléfono (020)                                                                                                                      | `chk_users_phone_format`                                                                                                |
-| Foto de perfil bajo la carpeta de la propia cuenta, con el formato de la API (021)                                                              | `chk_users_avatar_key_owner`, `chk_users_avatar_key_format`                                                             |
-| Clave de la foto y su fecha, juntas (021)                                                                                                       | `chk_users_avatar_pair`                                                                                                 |
-| Sesiones solo de cuentas activas; cada token en una sesión de SU cuenta (022)                                                                   | `fk_user_sessions_active_user`, `fk_refresh_tokens_session` (FK `(family_id, user_id)`)                                 |
-| Nunca la IP completa: IPv4 sin el último octeto, IPv6 solo el /48 (022)                                                                         | `chk_user_sessions_ip_prefix`                                                                                           |
-| Cuenta eliminada sin nombre, correo real, teléfono, foto ni contraseña (024)                                                                    | `chk_users_deleted_scrubbed`, `chk_users_password_by_status`, `chk_users_deleted_at`                                    |
-| Un cliente siempre tiene un contador ACTIVO: un contador con clientes no se elimina (024)                                                       | `fk_clients_active_accountant` (FK `(accountant_user_id, accountant_status)`)                                           |
-| Concepto: si dice "de la IA", el monto es el que leyó la IA; si lo corrigió una persona, está revisado; revisión con fecha y autor juntos (026) | `chk_tax_concepts_ai_amount_kept`, `chk_tax_concepts_person_reviewed`, `chk_tax_concepts_review_pair`                   |
-| La última actividad no retrocede ni es anterior al inicio (022)                                                                                 | trigger `trg_refresh_tokens_touch_session` (`GREATEST`), `chk_user_sessions_seen`                                       |
-
-Patrón para cada tabla nueva "de cuenta activa":
-`user_status account_status NOT NULL DEFAULT active CHECK (user_status = active)` y
-`FOREIGN KEY (user_id, user_status) REFERENCES users (id, status) ON DELETE CASCADE`.
-Por qué así y no con triggers: ADR 0009 en `renta-ia-backend/docs/adr/`. Las pruebas que
-intentan violar cada regla con SQL directo están en `renta-ia-backend/tests/integration/accountStatus.test.ts`
-(017), `passwordReset.test.ts` (018), `mfa.test.ts` (019), `profile.test.ts` (020), `avatar.test.ts` (021) y
-`userSessions.test.ts` (022) y `accountData.test.ts` (024). Política de eliminación: `renta-ia-backend/docs/data-retention.md`. El trigger de 022 no hace cumplir esa regla (la FK compuesta sí): solo
-crea la fila de la sesión con el primer token de la familia y mueve su última actividad; por qué, en ADR 0013.
+El glosario completo del proyecto está en el
+[README principal](https://github.com/Jonar519/renta-ia-backend#11-glosario).
